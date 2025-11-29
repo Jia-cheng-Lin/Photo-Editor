@@ -112,12 +112,12 @@ struct ContentView: View {
                         VStack(spacing: 8) {
                             Image(systemName: "photo.on.rectangle.angled")
                                 .font(.system(size: 40, weight: .regular))
-                                .foregroundStyle(.white.opacity(0.7))
+                                .foregroundStyle(Color.black.opacity(0.8))
                             Text("Add a photo")
-                                .foregroundStyle(.white.opacity(0.8))
+                                .foregroundStyle(Color.black)
                             Text("Tap to choose from Library or Camera")
                                 .font(.footnote)
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(Color.black.opacity(0.7))
                         }
                         .frame(width: side, height: side)
                     }
@@ -130,7 +130,7 @@ struct ContentView: View {
 
             Spacer()
         }
-        .background(GrayscaleRadialBackground())
+        .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("Photo Editor")
         .confirmationDialog("Select Image Source", isPresented: $showImageSourceMenu, titleVisibility: .visible) {
             Button("Photo Library") {
@@ -227,6 +227,27 @@ struct ContentView: View {
             }
             .padding(.horizontal)
 
+            // Zoom slider + ratio label
+            VStack(spacing: 8) {
+                HStack {
+                    Text("縮放")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.7))
+                    Slider(
+                        value: Binding(
+                            get: { Double(currentZoom) },
+                            set: { currentZoom = CGFloat($0).clamped(to: 0.5...3.0) }
+                        ),
+                        in: 0.5...3.0
+                    )
+                    Text(String(format: "%.2fx", currentZoom))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 56, alignment: .trailing)
+                }
+                .padding(.horizontal)
+            }
+
             Spacer(minLength: 8)
 
             SquareCanvas { side in
@@ -250,7 +271,7 @@ struct ContentView: View {
             .disabled(originalImage == nil)
         }
         .padding(.vertical)
-        .background(GrayscaleRadialBackground())
+        .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("Zoom & Move")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -396,7 +417,7 @@ struct ContentView: View {
             .padding(.horizontal)
         }
         .padding(.vertical)
-        .background(GrayscaleRadialBackground())
+        .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("Add Text")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -658,7 +679,7 @@ struct ContentView: View {
             .padding(.horizontal)
         }
         .padding(.vertical)
-        .background(GrayscaleRadialBackground())
+        .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("Export")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -804,7 +825,7 @@ private struct FiltersStepView: View {
             .padding(.horizontal)
         }
         .padding(.vertical)
-        .background(GrayscaleRadialBackground())
+        .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("Choose Filter")
     }
 }
@@ -902,7 +923,7 @@ private struct AdjustStepView: View {
             .padding(.horizontal)
         }
         .padding(.vertical)
-        .background(GrayscaleRadialBackground())
+        .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("Adjust")
     }
 
@@ -951,7 +972,6 @@ private struct SquareCanvas<Content: View>: View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.width)
             ZStack {
-                // 灰階放射狀背景
                 GrayscaleRadialBackground()
                 content(side)
                     .frame(width: side, height: side)
@@ -1042,18 +1062,36 @@ private struct CameraPicker: UIViewControllerRepresentable {
     ContentView()
 }
 
-// 共用灰階放射狀背景
+// 共用灰白基調的漸層背景（預設：放射狀）
 private struct GrayscaleRadialBackground: View {
     var body: some View {
         RadialGradient(
             gradient: Gradient(colors: [
-                Color.black,
-                Color(white: 0.15),
-                Color(white: 0.35)
+                Color(white: 0.95),   // 近白
+                Color(white: 0.75),
+                Color(white: 0.45),   // 中灰
+                Color(white: 0.20)    // 深灰
             ]),
             center: .center,
             startRadius: 0,
-            endRadius: 800
+            endRadius: 1200
+        )
+    }
+}
+
+// 可選：線性灰白漸層背景（若偏好線性可改用此元件）
+// 將畫面中的 GrayscaleRadialBackground() 換成 LinearGrayscaleBackground() 即可
+private struct LinearGrayscaleBackground: View {
+    var body: some View {
+        LinearGradient(
+            colors: [
+                Color(white: 0.95),
+                Color(white: 0.80),
+                Color(white: 0.55),
+                Color(white: 0.25)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
         )
     }
 }
