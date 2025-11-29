@@ -29,19 +29,20 @@ struct ContentView: View {
     @State private var cumulativeOffsetScreen: CGSize = .zero
     @State private var centerInImage: CGPoint?
 
-    // Step 2: Text overlays
+    // Step 2: Text overlays (shared state across steps)
     @State private var overlays: [TextOverlay] = []
     @State private var selectedOverlayID: UUID? = nil
     @State private var isTyping: Bool = false
     @FocusState private var textFieldFocused: Bool
 
-    // Simple typing inputs
+    // Simple typing inputs (still used to sync with overlays, but no bottom input bar in Alt step)
     @State private var typedText: String = ""
     @State private var selectedFontName: String? = nil
     @State private var textColor: Color = .white
     @State private var fontSize: CGFloat = 28
 
     // UI options
+    // Keep the same font list internally, but the Alt step will display generic "Font" labels instead of names.
     private let fontOptions: [String?] = [nil, "PingFang TC", "Helvetica Neue", "Avenir Next", "Georgia", "Times New Roman", "Courier New"]
     private let colorOptions: [Color] = [.white, .black, .red, .orange, .yellow, .green, .blue, .purple]
 
@@ -63,6 +64,25 @@ struct ContentView: View {
                         TransformView()
                     case .addText(let baseImage):
                         AddTextView(baseImage: baseImage)
+                    case .addTextAlt(let baseImage):
+                        AddTextAltView(
+                            baseImage: baseImage,
+                            overlays: $overlays,
+                            selectedOverlayID: $selectedOverlayID,
+                            isTyping: $isTyping,
+                            textFieldFocused: _textFieldFocused,
+                            typedText: $typedText,
+                            selectedFontName: $selectedFontName,
+                            textColor: $textColor,
+                            fontSize: $fontSize,
+                            fontOptions: fontOptions,
+                            colorOptions: colorOptions,
+                            onBack: { path.removeLast() },
+                            onNext: {
+                                let overlaysSnapshot = overlays
+                                path.append(.init(kind: .filters(baseImage: baseImage, overlays: overlaysSnapshot)))
+                            }
+                        )
                     case .filters(let baseImage, let overlays):
                         FiltersStepView(
                             baseImage: baseImage,
@@ -327,7 +347,7 @@ struct ContentView: View {
         return UIGraphicsGetImageFromCurrentImageContext() ?? base
     }
 
-    // MARK: - Step 2: Add Text
+    // MARK: - Step 2A: Original Add Text (kept)
     @ViewBuilder
     private func AddTextView(baseImage: UIImage) -> some View {
         VStack(spacing: 12) {
@@ -401,19 +421,33 @@ struct ContentView: View {
 
             Spacer(minLength: 8)
 
-            Button {
-                let overlaysSnapshot = overlays
-                path.append(.init(kind: .filters(baseImage: baseImage, overlays: overlaysSnapshot)))
-            } label: {
-                Text("Next")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.white.opacity(0.15))
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            VStack(spacing: 10) {
+                Button {
+                    let overlaysSnapshot = overlays
+                    path.append(.init(kind: .filters(baseImage: baseImage, overlays: overlaysSnapshot)))
+                } label: {
+                    Text("Next")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.white.opacity(0.15))
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(overlays.isEmpty)
+
+                Button {
+                    path.append(.init(kind: .addTextAlt(baseImage: baseImage)))
+                } label: {
+                    Text("Add another text style")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.white.opacity(0.22))
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
             }
-            .disabled(overlays.isEmpty)
             .padding(.horizontal)
         }
         .padding(.vertical)
@@ -429,7 +463,7 @@ struct ContentView: View {
                let index = overlays.firstIndex(where: { $0.id == sel }),
                isTyping {
                 VStack(spacing: 8) {
-                    // Font selection
+                    // Font selection (original)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
                             ForEach(fontOptions, id: \.self) { name in
@@ -449,7 +483,7 @@ struct ContentView: View {
                         .padding(.horizontal)
                     }
 
-                    // Color selection
+                    // Color selection (original)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
                             ForEach(colorOptions.indices, id: \.self) { idx in
@@ -467,7 +501,7 @@ struct ContentView: View {
                         .padding(.horizontal)
                     }
 
-                    // Text input + font size
+                    // Text input + font size (original)
                     HStack(alignment: .center) {
                         VStack(alignment: .leading, spacing: 8) {
                             TextField("Enter text", text: Binding(
@@ -508,6 +542,9 @@ struct ContentView: View {
             if !focused { isTyping = false }
         }
     }
+
+    // Storage for trash zone rect used by the Alt step
+    @State private var _trashZoneRect: CGRect? = nil
 
     // Render overlays to transparent layer (Core Graphics)
     static func renderTextOverlaysLayer(size: CGSize, scale: CGFloat, overlays: [TextOverlay]) -> UIImage {
@@ -694,6 +731,7 @@ struct ContentView: View {
         enum Kind {
             case transform
             case addText(baseImage: UIImage)
+            case addTextAlt(baseImage: UIImage) // New step
             case filters(baseImage: UIImage, overlays: [TextOverlay])
             case adjust(baseImage: UIImage, overlays: [TextOverlay], filter: FilterKind)
             case export(baseImage: UIImage, overlays: [TextOverlay], filter: FilterKind, brightness: Double, contrast: Double)
@@ -753,6 +791,277 @@ struct ContentView: View {
         selectedFilter = .none
         brightness = 0.0
         contrast = 1.0
+    }
+}
+
+// MARK: - New IG-like Add Text View as standalone struct
+private struct AddTextAltView: View {
+    let baseImage: UIImage
+
+    // Bindings to shared state from ContentView
+    @Binding var overlays: [TextOverlay]
+    @Binding var selectedOverlayID: UUID?
+    @Binding var isTyping: Bool
+    @FocusState var textFieldFocused: Bool
+    @Binding var typedText: String
+    @Binding var selectedFontName: String?
+    @Binding var textColor: Color
+    @Binding var fontSize: CGFloat
+
+    let fontOptions: [String?]
+    let colorOptions: [Color]
+    let onBack: () -> Void
+    let onNext: () -> Void
+
+    // Local state for drag-to-delete UX
+    @State private var isDragging: Bool = false
+    @State private var showTrashZone: Bool = false
+    @State private var trashZoneRect: CGRect = .zero
+
+    private struct TrashZoneKey: PreferenceKey {
+        static var defaultValue: CGRect = .zero
+        static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+            value = nextValue()
+        }
+    }
+
+    // Binding to the selected overlay's text, if any
+    private var selectedOverlayTextBinding: Binding<String>? {
+        guard let sel = selectedOverlayID,
+              let index = overlays.firstIndex(where: { $0.id == sel }) else { return nil }
+        return Binding<String>(
+            get: { overlays[index].text },
+            set: { newValue in
+                overlays[index].text = newValue
+                typedText = newValue
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ZStack(alignment: .leading) {
+                SquareCanvas { side in
+                    ZStack {
+                        Image(uiImage: baseImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: side, height: side)
+
+                        ForEach(overlays) { overlay in
+                            // No dashed border, no close X here.
+                            // Movement should be implemented by DraggableTextOverlay by updating overlay.position.
+                            DraggableTextOverlay(
+                                overlay: binding(for: overlay),
+                                isSelected: selectedOverlayID == overlay.id,
+                                onTap: {
+                                    selectedOverlayID = overlay.id
+                                    isTyping = true
+                                    textFieldFocused = true
+                                    typedText = overlay.text
+                                    selectedFontName = overlay.fontName
+                                    textColor = overlay.textColor
+                                    fontSize = overlay.fontSize
+                                }
+                            )
+                            // We still track drag to show trash zone and handle drop-to-delete.
+                            .highPriorityGesture(
+                                DragGesture()
+                                    .onChanged { _ in
+                                        isDragging = true
+                                        showTrashZone = true
+                                    }
+                                    .onEnded { value in
+                                        isDragging = false
+                                        if trashZoneRect.contains(value.location) {
+                                            if let idx = overlays.firstIndex(where: { $0.id == overlay.id }) {
+                                                overlays.remove(at: idx)
+                                                if selectedOverlayID == overlay.id {
+                                                    selectedOverlayID = nil
+                                                    isTyping = false
+                                                }
+                                            }
+                                        }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                            showTrashZone = false
+                                        }
+                                    }
+                            )
+                        }
+                    }
+                    .frame(width: side, height: side)
+                }
+
+                // Left vertical font-size slider pinned to the canvas
+                if let sel = selectedOverlayID,
+                   let index = overlays.firstIndex(where: { $0.id == sel }) {
+                    VStack {
+                        Spacer()
+                        VerticalSizeSlider(
+                            value: Binding(
+                                get: { overlays[index].fontSize },
+                                set: { overlays[index].fontSize = $0; fontSize = $0 }
+                            ),
+                            range: 12...96
+                        )
+                        .frame(width: 44, height: 220)
+                        .padding(.leading, 4)
+                        .padding(.bottom, 16)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal)
+
+            // Hidden TextField to capture keyboard input and update the selected overlay text
+            Group {
+                if let textBinding = selectedOverlayTextBinding, isTyping {
+                    TextField("", text: textBinding, axis: .vertical)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+                        .focused($textFieldFocused)
+                        .frame(height: 0)
+                        .opacity(0.01)
+                        .padding(.horizontal, -1000)
+                }
+            }
+
+            // Generic "Font" buttons row (no font names shown)
+            if let sel = selectedOverlayID,
+               let idx = overlays.firstIndex(where: { $0.id == sel }) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        let options = Array(fontOptions.prefix(5))
+                        ForEach(options.indices, id: \.self) { i in
+                            let name = options[i]
+                            Text("Font")
+                                .font(.system(size: 16))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background((overlays[idx].fontName == name) ? Color.white.opacity(0.25) : Color.white.opacity(0.10))
+                                .clipShape(Capsule())
+                                .onTapGesture {
+                                    overlays[idx].fontName = name
+                                    selectedFontName = name
+                                }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+                // Color row for quick text color selection
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(colorOptions.indices, id: \.self) { cIndex in
+                            let c = colorOptions[cIndex]
+                            Circle()
+                                .fill(c)
+                                .frame(width: 28, height: 28)
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white.opacity(overlays[idx].textColor == c ? 0.9 : 0.2), lineWidth: overlays[idx].textColor == c ? 2 : 1)
+                                )
+                                .onTapGesture {
+                                    overlays[idx].textColor = c
+                                    textColor = c
+                                }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                onNext()
+            } label: {
+                Text("Next")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.white.opacity(0.15))
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .disabled(overlays.isEmpty)
+            .padding(.horizontal)
+        }
+        .padding(.vertical)
+        .background(GrayscaleRadialBackground().ignoresSafeArea())
+        .navigationTitle("Add another text style")
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { onBack() } label: { Image(systemName: "chevron.left") }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    let new = TextOverlay(
+                        text: "Type here",
+                        position: .zero,
+                        fontSize: 28,
+                        fontWeight: .bold,
+                        fontName: nil,
+                        textColor: .white,
+                        hasBackground: false,
+                        backgroundColor: Color.black.opacity(0.6)
+                    )
+                    overlays.append(new)
+                    selectedOverlayID = new.id
+                    isTyping = true
+                    // focus the hidden TextField so keyboard appears
+                    textFieldFocused = true
+
+                    typedText = new.text
+                    selectedFontName = new.fontName
+                    textColor = new.textColor
+                    fontSize = new.fontSize
+                } label: {
+                    Label("Text", systemImage: "textformat")
+                }
+            }
+        }
+        // Bottom trash zone overlay
+        .overlay(alignment: .bottom) {
+            GeometryReader { geo in
+                let zoneHeight: CGFloat = 100
+                let rect = CGRect(x: 0, y: geo.size.height - zoneHeight, width: geo.size.width, height: zoneHeight)
+                Color.clear
+                    .preference(key: TrashZoneKey.self, value: rect)
+                    .frame(width: 0, height: 0)
+
+                if showTrashZone {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.red.opacity(0.22))
+                            .frame(height: zoneHeight)
+                            .overlay(
+                                Label("Drop to delete", systemImage: "trash.fill")
+                                    .font(.headline)
+                                    .foregroundStyle(.white)
+                            )
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 12)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.easeInOut(duration: 0.2), value: showTrashZone)
+                }
+            }
+        }
+        .onPreferenceChange(TrashZoneKey.self) { value in
+            trashZoneRect = value
+        }
+        .onChange(of: textFieldFocused) { _, focused in
+            if !focused { isTyping = false }
+        }
+    }
+
+    private func binding(for overlay: TextOverlay) -> Binding<TextOverlay> {
+        guard let idx = overlays.firstIndex(where: { $0.id == overlay.id }) else {
+            return .constant(overlay)
+        }
+        return $overlays[idx]
     }
 }
 
