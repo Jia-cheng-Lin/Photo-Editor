@@ -29,13 +29,13 @@ struct ContentView: View {
     @State private var cumulativeOffsetScreen: CGSize = .zero
     @State private var centerInImage: CGPoint?
 
-    // Step 2: Text overlays (shared state across steps)
+    // Step 2/IG: Text overlays (shared if desired; each step takes a snapshot when navigating)
     @State private var overlays: [TextOverlay] = []
     @State private var selectedOverlayID: UUID? = nil
     @State private var isTyping: Bool = false
     @FocusState private var textFieldFocused: Bool
 
-    // Simple typing inputs
+    // Simple typing inputs (for original typing panel)
     @State private var typedText: String = ""
     @State private var selectedFontName: String? = nil
     @State private var textColor: Color = .black
@@ -45,7 +45,7 @@ struct ContentView: View {
     private let fontOptions: [String?] = [nil, "PingFang TC", "Helvetica Neue", "Avenir Next", "Georgia", "Times New Roman", "Courier New"]
     private let colorOptions: [Color] = [.black, .white, .red, .orange, .yellow, .green, .blue, .purple]
 
-    // Step 3: filter + adjustments (combined)
+    // Step 3: filter + adjustments
     @State private var selectedFilter: FilterKind = .none
     @State private var brightness: Double = 0.0
     @State private var contrast: Double = 1.0
@@ -61,6 +61,8 @@ struct ContentView: View {
                         TransformView()
                     case .addText(let baseImage):
                         AddTextView(baseImage: baseImage)
+                    case .igAddText(let baseImage):
+                        IGTextAddView(baseImage: baseImage)
                     case .combinedAdjust(let baseImage, let overlays):
                         CombinedAdjustView(
                             baseImage: baseImage,
@@ -116,7 +118,6 @@ struct ContentView: View {
 
             Spacer(minLength: 8)
 
-            // Next button on the start page
             VStack(spacing: 10) {
                 Button(action: pushToTransform) {
                     Text("Next")
@@ -231,7 +232,6 @@ struct ContentView: View {
             }
             .padding(.horizontal)
 
-            // Zoom slider + ratio label
             VStack(spacing: 8) {
                 HStack {
                     Text("Zoom")
@@ -329,7 +329,7 @@ struct ContentView: View {
         return UIGraphicsGetImageFromCurrentImageContext() ?? base
     }
 
-    // MARK: - Step 2: Add Text
+    // MARK: - Step 2: Add Text (Original typing panel)
     @ViewBuilder
     private func AddTextView(baseImage: UIImage) -> some View {
         VStack(spacing: 12) {
@@ -341,45 +341,28 @@ struct ContentView: View {
                         .frame(width: side, height: side)
 
                     ForEach(overlays) { overlay in
-                        ZStack(alignment: .topTrailing) {
-                            DraggableTextOverlay(
-                                overlay: binding(for: overlay),
-                                isSelected: selectedOverlayID == overlay.id,
-                                onTap: { handleSelectOverlay(overlay) }
-                            )
-
-                            if selectedOverlayID == overlay.id && isTyping {
-                                Button(action: { handleDeleteOverlay(overlay) }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 18, weight: .semibold))
-                                        .foregroundStyle(.black)
-                                        .background(Circle().fill(Color.red))
-                                }
-                                .offset(x: 10, y: -10)
-                            }
-                        }
+                        DraggableTextOverlay(
+                            overlay: binding(for: overlay),
+                            isSelected: selectedOverlayID == overlay.id,
+                            onTap: { handleSelectOverlay(overlay) }
+                        )
                     }
                 }
                 .frame(width: side, height: side)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    let new = makeNewOverlay()
+                    // 新增一個 overlay 並選取以供底部輸入
+                    let new = makeNewOverlayEmpty()
                     overlays.append(new)
-                    selectedOverlayID = new.id
-                    isTyping = true
-                    textFieldFocused = true
-
-                    typedText = new.text
-                    selectedFontName = new.fontName
-                    textColor = new.textColor
-                    fontSize = new.fontSize
+                    handleSelectOverlay(new)
                 }
             }
             .padding(.horizontal)
 
             Spacer(minLength: 8)
 
-            VStack(spacing: 10) {
+            // 下方：兩個按鈕（Next 與 IG Text）
+            HStack(spacing: 10) {
                 Button(action: { handleAddTextNext(baseImage: baseImage) }) {
                     Text("Next")
                         .font(.headline)
@@ -389,18 +372,38 @@ struct ContentView: View {
                         .foregroundStyle(.black)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
+
+                Button(action: { pushToIGText(baseImage: baseImage) }) {
+                    Text("IG Text")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.black.opacity(0.12))
+                        .foregroundStyle(.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
             }
             .padding(.horizontal)
         }
         .padding(.vertical)
         .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("Add Text")
+        .toolbar {
+            // 顯示鍵盤時提供「完成」按鈕
+            if textFieldFocused || isTyping {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") {
+                        textFieldFocused = false
+                        isTyping = false
+                    }
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if let sel = selectedOverlayID,
-               let index = overlays.firstIndex(where: { $0.id == sel }),
-               isTyping {
+               let index = overlays.firstIndex(where: { $0.id == sel }) {
                 VStack(spacing: 8) {
-                    // Font selection
+                    // 字體選擇
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
                             ForEach(fontOptions, id: \.self) { name in
@@ -421,7 +424,7 @@ struct ContentView: View {
                         .padding(.horizontal)
                     }
 
-                    // Color selection
+                    // 顏色選擇
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
                             ForEach(colorOptions.indices, id: \.self) { idx in
@@ -439,14 +442,14 @@ struct ContentView: View {
                         .padding(.horizontal)
                     }
 
-                    // Text input + font size
+                    // 文字輸入 + 字級
                     HStack(alignment: .center) {
                         VStack(alignment: .leading, spacing: 8) {
                             let textBinding = Binding<String>(
                                 get: { overlays[index].text },
                                 set: { overlays[index].text = $0; typedText = $0 }
                             )
-                            TextField("Enter text", text: textBinding, axis: .vertical)
+                            TextField("Type here", text: textBinding, axis: .vertical)
                                 .lineLimit(1...3)
                                 .textInputAutocapitalization(.never)
                                 .disableAutocorrection(true)
@@ -496,69 +499,238 @@ struct ContentView: View {
         fontSize = overlay.fontSize
     }
 
-    private func handleDeleteOverlay(_ overlay: TextOverlay) {
-        if let idx = overlays.firstIndex(where: { $0.id == overlay.id }) {
-            overlays.remove(at: idx)
-        }
-        selectedOverlayID = nil
-        isTyping = false
-        textFieldFocused = false
-    }
-
     private func handleAddTextNext(baseImage: UIImage) {
         let overlaysSnapshot = overlays
         path.append(.init(kind: .combinedAdjust(baseImage: baseImage, overlays: overlaysSnapshot)))
     }
 
-    private func makeNewOverlay() -> TextOverlay {
+    private func pushToIGText(baseImage: UIImage) {
+        // 進到 IG 式打字頁，沿用目前 overlays 當作初始值（或想要清空可改成 overlays = [] 再傳）
+        path.append(.init(kind: .igAddText(baseImage: baseImage)))
+    }
+
+    private func makeNewOverlayEmpty() -> TextOverlay {
         TextOverlay(
-            text: "Type here",
+            text: "",
             position: .zero,
             fontSize: 28,
             fontWeight: .bold,
             fontName: nil,
             textColor: .black,
             hasBackground: false,
-            backgroundColor: Color.black.opacity(0.06)
+            backgroundColor: Color.black.opacity(0.06),
+            measuredSize: .zero
         )
     }
 
-    // Storage for trash zone rect used by the Alt step
-    @State private var _trashZoneRect: CGRect? = nil
+    // MARK: - Step IG: On-canvas typing page (IG style)
+    @ViewBuilder
+    private func IGTextAddView(baseImage: UIImage) -> some View {
+        VStack(spacing: 12) {
+            ZStack {
+                SquareCanvas { side in
+                    ZStack {
+                        Image(uiImage: baseImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: side, height: side)
 
-    // Render overlays to transparent layer (Core Graphics)
+                        // 拖曳時顯示垃圾桶區
+                        if isDraggingOverlay {
+                            TrashZoneView()
+                                .frame(width: 120, height: 60)
+                                .position(x: side/2, y: side - 40)
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear
+                                            .onAppear { trashZoneRect = geo.frame(in: .named("Canvas")) }
+                                            .onChange(of: geo.size) { _, _ in
+                                                trashZoneRect = geo.frame(in: .named("Canvas"))
+                                            }
+                                    }
+                                )
+                        }
+
+                        // 文字 overlays（可拖曳、選取即打字）
+                        ForEach(overlays) { overlay in
+                            let isSelected = (selectedOverlayID == overlay.id)
+                            DraggableTypingOverlay(
+                                overlay: binding(for: overlay),
+                                isSelected: isSelected,
+                                onBeginDrag: { isDraggingOverlay = true },
+                                onEndDrag: { finalFrame in
+                                    isDraggingOverlay = false
+                                    if let trash = trashZoneRect, trash.intersects(finalFrame) {
+                                        deleteOverlay(overlay)
+                                    }
+                                },
+                                textFieldFocused: _textFieldFocused
+                            )
+                            .onTapGesture { activateTyping(for: overlay) }
+                        }
+                    }
+                    .coordinateSpace(name: "Canvas")
+                }
+
+                // 左側垂直字級滑桿（作用於選取中的 overlay）
+                if let sel = selectedOverlayID, let idx = overlays.firstIndex(where: { $0.id == sel }) {
+                    VStack {
+                        Spacer()
+                        VerticalSizeSlider(value: Binding(
+                            get: { overlays[idx].fontSize },
+                            set: { overlays[idx].fontSize = $0; fontSize = $0 }
+                        ), range: 12...96)
+                        .frame(width: 48, height: 220)
+                        .padding(.bottom, 40)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 6)
+                }
+            }
+            .padding(.horizontal)
+
+            Spacer(minLength: 8)
+
+            // 下方：字體與顏色列（以「Font」無名稱樣式）
+            VStack(spacing: 10) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(fontOptions, id: \.self) { name in
+                            let label = "Font"
+                            Text(label)
+                                .font(name != nil ? .custom(name!, size: 18) : .system(size: 18))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(Color.black.opacity(0.06))
+                                .clipShape(Capsule())
+                                .onTapGesture {
+                                    if let sel = selectedOverlayID,
+                                       let idx = overlays.firstIndex(where: { $0.id == sel }) {
+                                        overlays[idx].fontName = name
+                                        selectedFontName = name
+                                    }
+                                }
+                                .foregroundStyle(.black)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(colorOptions.indices, id: \.self) { idx in
+                            let c = colorOptions[idx]
+                            Circle()
+                                .fill(c)
+                                .frame(width: 28, height: 28)
+                                .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1))
+                                .onTapGesture {
+                                    if let sel = selectedOverlayID,
+                                       let i = overlays.firstIndex(where: { $0.id == sel }) {
+                                        overlays[i].textColor = c
+                                        textColor = c
+                                    }
+                                }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+                Button(action: { handleIGAddTextNext(baseImage: baseImage) }) {
+                    Text("Next")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.black.opacity(0.08))
+                        .foregroundStyle(.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            .padding(.horizontal)
+        }
+        .padding(.vertical)
+        .background(GrayscaleRadialBackground().ignoresSafeArea())
+        .navigationTitle("IG Text")
+        .toolbar {
+            // 右上角：新增文字
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Text") { createAndActivateEmptyOverlay() }
+            }
+            // 鍵盤出現時顯示「完成」
+            if textFieldFocused || isTyping {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") {
+                        textFieldFocused = false
+                        isTyping = false
+                    }
+                }
+            }
+        }
+        .onChange(of: textFieldFocused) { _, focused in
+            if !focused { isTyping = false }
+        }
+    }
+
+    // IG helpers
+    @State private var isDraggingOverlay: Bool = false
+    @State private var trashZoneRect: CGRect? = nil
+
+    private func createAndActivateEmptyOverlay() {
+        let new = makeNewOverlayEmpty()
+        overlays.append(new)
+        activateTyping(for: new)
+    }
+
+    private func activateTyping(for overlay: TextOverlay) {
+        selectedOverlayID = overlay.id
+        isTyping = true
+        textFieldFocused = true
+        typedText = overlay.text
+        selectedFontName = overlay.fontName
+        textColor = overlay.textColor
+        fontSize = overlay.fontSize
+    }
+
+    private func deleteOverlay(_ overlay: TextOverlay) {
+        if let idx = overlays.firstIndex(where: { $0.id == overlay.id }) {
+            overlays.remove(at: idx)
+        }
+        if selectedOverlayID == overlay.id {
+            selectedOverlayID = nil
+            isTyping = false
+            textFieldFocused = false
+        }
+    }
+
+    private func handleIGAddTextNext(baseImage: UIImage) {
+        let overlaysSnapshot = overlays
+        path.append(.init(kind: .combinedAdjust(baseImage: baseImage, overlays: overlaysSnapshot)))
+    }
+
+    // MARK: - Render helpers for overlays
     static func renderTextOverlaysLayer(size: CGSize, scale: CGFloat, overlays: [TextOverlay]) -> UIImage {
         let renderSize = size
         UIGraphicsBeginImageContextWithOptions(renderSize, false, scale)
         defer { UIGraphicsEndImageContext() }
 
         for ov in overlays {
-            let uiFont: UIFont = {
-                if let name = ov.fontName, !name.isEmpty, let f = UIFont(name: name, size: ov.fontSize) {
-                    return f
-                } else {
-                    let weight: UIFont.Weight
-                    switch ov.fontWeight {
-                    case .regular: weight = .regular
-                    case .semibold: weight = .semibold
-                    case .bold: weight = .bold
-                    default: weight = .bold
-                    }
-                    return UIFont.systemFont(ofSize: ov.fontSize, weight: weight)
-                }
-            }()
+            let uiFont: UIFont = makeUIFont(fontName: ov.fontName, size: ov.fontSize, weight: ov.fontWeight)
 
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: uiFont,
                 .foregroundColor: UIColor(ov.textColor)
             ]
 
-            let ns = ov.text as NSString
-            let bounds = ns.boundingRect(with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
-                                         options: [.usesLineFragmentOrigin, .usesFontLeading],
-                                         attributes: attrs,
-                                         context: nil).integral
-            let textSize = bounds.size
+            let textSize: CGSize = {
+                if ov.measuredSize != .zero { return ov.measuredSize }
+                let ns = ov.text as NSString
+                let bounds = ns.boundingRect(with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+                                             options: [.usesLineFragmentOrigin, .usesFontLeading],
+                                             attributes: attrs,
+                                             context: nil).integral
+                return bounds.size
+            }()
 
             let canvasCenter = CGPoint(x: renderSize.width/2, y: renderSize.height/2)
             let origin = CGPoint(
@@ -573,13 +745,13 @@ struct ContentView: View {
                 path.fill()
             }
 
+            let ns = ov.text as NSString
             ns.draw(at: origin, withAttributes: attrs)
         }
 
         return UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
     }
 
-    // Composite overlays onto base image (Core Graphics)
     static func renderTextOverlaysOnImage(base: UIImage, overlays: [TextOverlay]) -> UIImage {
         let side = min(base.size.width, base.size.height)
         let renderSize = CGSize(width: side, height: side)
@@ -590,32 +762,22 @@ struct ContentView: View {
         base.draw(in: CGRect(origin: .zero, size: renderSize))
 
         for ov in overlays {
-            let uiFont: UIFont = {
-                if let name = ov.fontName, !name.isEmpty, let f = UIFont(name: name, size: ov.fontSize) {
-                    return f
-                } else {
-                    let weight: UIFont.Weight
-                    switch ov.fontWeight {
-                    case .regular: weight = .regular
-                    case .semibold: weight = .semibold
-                    case .bold: weight = .bold
-                    default: weight = .bold
-                    }
-                    return UIFont.systemFont(ofSize: ov.fontSize, weight: weight)
-                }
-            }()
+            let uiFont: UIFont = makeUIFont(fontName: ov.fontName, size: ov.fontSize, weight: ov.fontWeight)
 
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: uiFont,
                 .foregroundColor: UIColor(ov.textColor)
             ]
 
-            let ns = ov.text as NSString
-            let bounds = ns.boundingRect(with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
-                                         options: [.usesLineFragmentOrigin, .usesFontLeading],
-                                         attributes: attrs,
-                                         context: nil).integral
-            let textSize = bounds.size
+            let textSize: CGSize = {
+                if ov.measuredSize != .zero { return ov.measuredSize }
+                let ns = ov.text as NSString
+                let bounds = ns.boundingRect(with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+                                             options: [.usesLineFragmentOrigin, .usesFontLeading],
+                                             attributes: attrs,
+                                             context: nil).integral
+                return bounds.size
+            }()
 
             let canvasCenter = CGPoint(x: renderSize.width/2, y: renderSize.height/2)
             let origin = CGPoint(
@@ -630,10 +792,53 @@ struct ContentView: View {
                 path.fill()
             }
 
+            let ns = ov.text as NSString
             ns.draw(at: origin, withAttributes: attrs)
         }
 
         return UIGraphicsGetImageFromCurrentImageContext() ?? base
+    }
+
+    // 統一字型建立：盡可能讓 Core Graphics 與 SwiftUI 的 Font(weight) 視覺一致
+    private static func makeUIFont(fontName: String?, size: CGFloat, weight: Font.Weight) -> UIFont {
+        // 將 SwiftUI Font.Weight 映射到 UIFont.Weight
+        let uiWeight: UIFont.Weight = {
+            switch weight {
+            case .ultraLight: return .ultraLight
+            case .thin: return .thin
+            case .light: return .light
+            case .regular: return .regular
+            case .medium: return .medium
+            case .semibold: return .semibold
+            case .bold: return .bold
+            case .heavy: return .heavy
+            case .black: return .black
+            default: return .regular
+            }
+        }()
+
+        // 沒有指定字體名稱 → 系統字體直接用 weight
+        guard let name = fontName, !name.isEmpty else {
+            return UIFont.systemFont(ofSize: size, weight: uiWeight)
+        }
+
+        // 指定字體名稱：先嘗試載入，再加上 weight trait
+        if let baseFont = UIFont(name: name, size: size) {
+            // 透過字體描述符加上 weight trait
+            let traits: [UIFontDescriptor.TraitKey: Any] = [
+                .weight: uiWeight
+            ]
+            let desc = baseFont.fontDescriptor.addingAttributes([.traits: traits])
+            let weighted = UIFont(descriptor: desc, size: size)
+
+            // 若字型家族不支援該 weight，weighted.pointSize 仍正確但外觀可能不變。
+            // 為了保證至少有對應粗細，若 weighted 與 baseFont 的字重無法觀察差異，可 fallback 為系統字體。
+            // 在這裡直接回傳 weighted；如需更激進可檢查 familyNames/availableMembers 做更精細對應。
+            return weighted
+        } else {
+            // 名稱無效時退回系統字體
+            return UIFont.systemFont(ofSize: size, weight: uiWeight)
+        }
     }
 
     // Binding for overlay
@@ -649,7 +854,8 @@ struct ContentView: View {
     struct EditorStep: Hashable {
         enum Kind {
             case transform
-            case addText(baseImage: UIImage)
+            case addText(baseImage: UIImage)       // 原本的打字方式（底部輸入欄）
+            case igAddText(baseImage: UIImage)     // IG 式畫布上打字
             case combinedAdjust(baseImage: UIImage, overlays: [TextOverlay])
         }
         let id = UUID()
@@ -710,6 +916,114 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Draggable typing overlay with trash delete (IG style)
+private struct DraggableTypingOverlay: View {
+    @Binding var overlay: TextOverlay
+    var isSelected: Bool
+    var onBeginDrag: () -> Void
+    var onEndDrag: (CGRect) -> Void
+    @FocusState var textFieldFocused: Bool
+
+    @State private var dragOffset: CGSize = .zero
+    @State private var frameInCanvas: CGRect = .zero
+
+    var body: some View {
+        content
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { updateFrame(geo: geo) }
+                        .onChange(of: geo.size) { _, _ in updateFrame(geo: geo) }
+                        .onChange(of: overlay.position) { _, _ in updateFrame(geo: geo) }
+                }
+            )
+            .offset(x: overlay.position.width + dragOffset.width,
+                    y: overlay.position.height + dragOffset.height)
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        dragOffset = value.translation
+                        onBeginDrag()
+                    }
+                    .onEnded { value in
+                        overlay.position.width += value.translation.width
+                        overlay.position.height += value.translation.height
+                        dragOffset = .zero
+                        onEndDrag(frameInCanvas)
+                    }
+            )
+            .animation(.snappy, value: overlay.position)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if isSelected {
+            textFieldView
+        } else {
+            textView
+        }
+    }
+
+    private var textView: some View {
+        let font = fontForOverlay()
+        return Text(overlay.text.isEmpty ? "Type here" : overlay.text)
+            .font(font)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(overlay.hasBackground ? overlay.backgroundColor : Color.clear)
+            .foregroundStyle(overlay.textColor)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var textFieldView: some View {
+        let font = fontForOverlay()
+        return TextField("Type here", text: Binding(
+            get: { overlay.text },
+            set: { overlay.text = $0 }
+        ), axis: .vertical)
+        .lineLimit(1...3)
+        .textInputAutocapitalization(.never)
+        .disableAutocorrection(true)
+        .focused($textFieldFocused)
+        .font(font)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(overlay.hasBackground ? overlay.backgroundColor : Color.clear)
+        .foregroundStyle(overlay.textColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onAppear { DispatchQueue.main.async { self.textFieldFocused = true } }
+    }
+
+    private func fontForOverlay() -> Font {
+        if let name = overlay.fontName, !name.isEmpty {
+            return .custom(name, size: overlay.fontSize).weight(overlay.fontWeight)
+        } else {
+            return .system(size: overlay.fontSize, weight: overlay.fontWeight)
+        }
+    }
+
+    private func updateFrame(geo: GeometryProxy) {
+        let size = geo.size
+        overlay.measuredSize = size
+        let origin = CGPoint(x: overlay.position.width, y: overlay.position.height)
+        frameInCanvas = CGRect(origin: origin, size: size)
+    }
+}
+
+// MARK: - Trash zone view
+private struct TrashZoneView: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.red.opacity(0.6), lineWidth: 2))
+            Image(systemName: "trash")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.red)
+        }
+    }
+}
+
 // MARK: - Combined Filter + Adjust view
 private struct CombinedAdjustView: View {
     let baseImage: UIImage
@@ -728,7 +1042,7 @@ private struct CombinedAdjustView: View {
 
     init(baseImage: UIImage, overlays: [TextOverlay], initialFilter: FilterKind, initialBrightness: Double, initialContrast: Double, onNext: @escaping (FilterKind, Double, Double) -> Void) {
         self.baseImage = baseImage
-        self.overlays = overlays
+               self.overlays = overlays
         self.initialFilter = initialFilter
         self.initialBrightness = initialBrightness
         self.initialContrast = initialContrast
@@ -741,7 +1055,6 @@ private struct CombinedAdjustView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // 預覽區
             SquareCanvas { side in
                 ZStack {
                     Image(uiImage: filteredBasePreview)
@@ -758,7 +1071,6 @@ private struct CombinedAdjustView: View {
             }
             .padding(.horizontal)
 
-            // Brightness & Contrast
             VStack(alignment: .leading, spacing: 12) {
                 Text("Brightness & Contrast")
                     .font(.headline)
@@ -768,38 +1080,24 @@ private struct CombinedAdjustView: View {
                         Text("Brightness")
                             .font(.subheadline)
                             .foregroundStyle(.black.opacity(0.8))
-
-                        let bBinding = Binding<Double>(
+                        Slider(value: Binding(
                             get: { localBrightness },
-                            set: { newVal in
-                                let snapped = (newVal * 10).rounded() / 10
-                                localBrightness = min(max(snapped, -1), 1)
-                                updatePreview()
-                            }
-                        )
-                        Slider(value: bBinding, in: -1...1, step: 0.1)
+                            set: { localBrightness = ( ($0 * 10).rounded() / 10 ).clamped(to: -1...1); updatePreview() }
+                        ), in: -1...1, step: 0.1)
                     }
-
                     HStack {
                         Text("Contrast")
                             .font(.subheadline)
                             .foregroundStyle(.black.opacity(0.8))
-
-                        let cBinding = Binding<Double>(
+                        Slider(value: Binding(
                             get: { localContrast },
-                            set: { newVal in
-                                let snapped = (newVal * 10).rounded() / 10
-                                localContrast = min(max(snapped, 0), 4)
-                                updatePreview()
-                            }
-                        )
-                        Slider(value: cBinding, in: 0...4, step: 0.1)
+                            set: { localContrast = ( ($0 * 10).rounded() / 10 ).clamped(to: 0...4); updatePreview() }
+                        ), in: 0...4, step: 0.1)
                     }
                 }
             }
             .padding(.horizontal)
 
-            // Filter
             VStack(alignment: .leading, spacing: 8) {
                 Text("Filters")
                     .font(.headline)
@@ -807,10 +1105,7 @@ private struct CombinedAdjustView: View {
                     baseImage: baseImage,
                     selected: Binding(
                         get: { localFilter },
-                        set: { newValue in
-                            localFilter = newValue
-                            updatePreview()
-                        }
+                        set: { localFilter = $0; updatePreview() }
                     ),
                     onSelect: { updatePreview() }
                 )
@@ -820,7 +1115,6 @@ private struct CombinedAdjustView: View {
 
             Spacer()
 
-            // Save / Share buttons
             let finalImage = ContentView.renderTextOverlaysOnImage(
                 base: filteredBasePreview,
                 overlays: overlays
@@ -869,29 +1163,6 @@ private struct CombinedAdjustView: View {
     private func updatePreview() {
         filteredBasePreview = filterService.render(image: baseImage, filter: localFilter, brightness: localBrightness, contrast: localContrast)
         onNext(localFilter, localBrightness, localContrast)
-    }
-}
-
-// MARK: - SwiftUI overlay presentation (unused but kept for parity)
-private struct OverlayTextView: View {
-    let overlay: TextOverlay
-
-    var body: some View {
-        var font: Font
-        if let name = overlay.fontName, !name.isEmpty {
-            font = .custom(name, size: overlay.fontSize).weight(overlay.fontWeight)
-        } else {
-            font = .system(size: overlay.fontSize, weight: overlay.fontWeight)
-        }
-
-        return Text(overlay.text)
-            .font(font)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(overlay.hasBackground ? overlay.backgroundColor : Color.clear)
-            .foregroundStyle(overlay.textColor)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .offset(x: overlay.position.width, y: overlay.position.height)
     }
 }
 
@@ -1002,30 +1273,14 @@ private struct GrayscaleRadialBackground: View {
     var body: some View {
         RadialGradient(
             gradient: Gradient(colors: [
-                Color(white: 0.95),   // 近白
+                Color(white: 0.95),
                 Color(white: 0.75),
-                Color(white: 0.45),   // 中灰
-                Color(white: 0.20)    // 深灰
+                Color(white: 0.45),
+                Color(white: 0.20)
             ]),
             center: .center,
             startRadius: 0,
             endRadius: 1200
-        )
-    }
-}
-
-// 可選：線性灰白漸層背景（若偏好線性可改用此元件）
-private struct LinearGrayscaleBackground: View {
-    var body: some View {
-        LinearGradient(
-            colors: [
-                Color(white: 0.95),
-                Color(white: 0.80),
-                Color(white: 0.55),
-                Color(white: 0.25)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
         )
     }
 }
@@ -1035,3 +1290,4 @@ private extension Comparable {
         min(max(self, range.lowerBound), range.upperBound)
     }
 }
+

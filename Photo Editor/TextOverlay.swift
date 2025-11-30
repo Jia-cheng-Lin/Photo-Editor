@@ -17,6 +17,9 @@ struct TextOverlay: Identifiable, Equatable {
     var hasBackground: Bool
     var backgroundColor: Color
 
+    // 新增：量測後的實際呈現尺寸（含內距），預設為 .zero
+    var measuredSize: CGSize = .zero
+
     init(
         text: String,
         position: CGSize = .zero,
@@ -25,7 +28,8 @@ struct TextOverlay: Identifiable, Equatable {
         fontName: String? = nil,
         textColor: Color = .primary,
         hasBackground: Bool = false,
-        backgroundColor: Color = Color.black.opacity(0.6)
+        backgroundColor: Color = Color.black.opacity(0.6),
+        measuredSize: CGSize = .zero
     ) {
         self.text = text
         self.position = position
@@ -35,6 +39,7 @@ struct TextOverlay: Identifiable, Equatable {
         self.textColor = textColor
         self.hasBackground = hasBackground
         self.backgroundColor = backgroundColor
+        self.measuredSize = measuredSize
     }
 }
 
@@ -44,7 +49,6 @@ extension TextOverlay {
     ]
 
     static let systemFontOptions: [String] = [
-        // 常見的系統字體名稱（實際可根據裝置支援）
         "SF Pro", "Helvetica Neue", "Avenir Next", "Georgia", "Times New Roman", "Courier New"
     ]
 
