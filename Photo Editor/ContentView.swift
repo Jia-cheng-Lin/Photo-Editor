@@ -29,21 +29,26 @@ struct ContentView: View {
     @State private var cumulativeOffsetScreen: CGSize = .zero
     @State private var centerInImage: CGPoint?
 
-    // Step 2/IG: Text overlays (shared if desired; each step takes a snapshot when navigating)
+    // Step 2/IG: Text overlays
     @State private var overlays: [TextOverlay] = []
     @State private var selectedOverlayID: UUID? = nil
     @State private var isTyping: Bool = false
     @FocusState private var textFieldFocused: Bool
 
-    // Simple typing inputs (for original typing panel)
+    // Simple typing inputs (mirror selected overlay)
     @State private var typedText: String = ""
     @State private var selectedFontName: String? = nil
     @State private var textColor: Color = .black
     @State private var fontSize: CGFloat = 28
+    @State private var bgEnabled: Bool = false
+    @State private var bgColor: Color = Color.black.opacity(0.06)
+    @State private var bgOpacity: Double = 0.06
 
     // UI options
     private let fontOptions: [String?] = [nil, "PingFang TC", "Helvetica Neue", "Avenir Next", "Georgia", "Times New Roman", "Courier New"]
     private let colorOptions: [Color] = [.black, .white, .red, .orange, .yellow, .green, .blue, .purple]
+    // Background color options (same palette; opacity controlled by slider)
+    private let backgroundOptions: [Color] = [.black, .white, .red, .orange, .yellow, .green, .blue, .purple]
 
     // Step 3: filter + adjustments
     @State private var selectedFilter: FilterKind = .none
@@ -74,6 +79,10 @@ struct ContentView: View {
                                 selectedFilter = chosenFilter
                                 brightness = b
                                 contrast = c
+                            },
+                            onExport: { filteredBase, overlays in
+                                let final = ContentView.renderTextOverlaysOnImage(base: filteredBase, overlays: overlays)
+                                UIImageWriteToSavedPhotosAlbum(final, nil, nil, nil)
                             }
                         )
                     }
@@ -203,12 +212,20 @@ struct ContentView: View {
                                 dragOffsetScreen = .zero
                             }
 
+                        // Zoom damping
+                        let zoomRange: ClosedRange<CGFloat> = 0.5...3.0
+                        let zoomDamping: CGFloat = 0.3
+
                         let magnify = MagnificationGesture()
                             .onChanged { scale in
-                                currentZoom = (scale * currentZoom).clamped(to: 0.5...3.0)
+                                let delta = scale - 1
+                                let adjusted = 1 + delta * zoomDamping
+                                currentZoom = (currentZoom * adjusted).clamped(to: zoomRange)
                             }
                             .onEnded { finalScale in
-                                currentZoom = (currentZoom * finalScale).clamped(to: 0.5...3.0)
+                                let delta = finalScale - 1
+                                let adjusted = 1 + delta * zoomDamping
+                                currentZoom = (currentZoom * adjusted).clamped(to: zoomRange)
                             }
 
                         Image(uiImage: base)
@@ -329,7 +346,7 @@ struct ContentView: View {
         return UIGraphicsGetImageFromCurrentImageContext() ?? base
     }
 
-    // MARK: - Step 2: Add Text (Original typing panel)
+    // MARK: - Step 2: Add Text (panel)
     @ViewBuilder
     private func AddTextView(baseImage: UIImage) -> some View {
         VStack(spacing: 12) {
@@ -351,7 +368,6 @@ struct ContentView: View {
                 .frame(width: side, height: side)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    // 新增一個 overlay 並選取以供底部輸入
                     let new = makeNewOverlayEmpty()
                     overlays.append(new)
                     handleSelectOverlay(new)
@@ -361,7 +377,189 @@ struct ContentView: View {
 
             Spacer(minLength: 8)
 
-            // 下方：兩個按鈕（Next 與 IG Text）
+            // Tool panel
+            VStack(spacing: 10) {
+                // Fonts
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(fontOptions, id: \.self) { name in
+                            let label = name ?? "System"
+                            Text(label)
+                                .font(name != nil ? .custom(name!, size: 16) : .system(size: 16))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(currentOverlay?.fontName == name ? Color.black.opacity(0.12) : Color.black.opacity(0.06))
+                                .clipShape(Capsule())
+                                .onTapGesture {
+                                    if let idx = selectedIndex {
+                                        overlays[idx].fontName = name
+                                        selectedFontName = name
+                                    }
+                                }
+                                .foregroundStyle(.black)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+                // Text color
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(colorOptions.indices, id: \.self) { idx in
+                            let c = colorOptions[idx]
+                            Circle()
+                                .fill(c)
+                                .frame(width: 28, height: 28)
+                                .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1))
+                                .overlay(
+                                    Group {
+                                        if currentOverlay?.textColor == c {
+                                            Circle().stroke(Color.black, lineWidth: 2)
+                                        }
+                                    }
+                                )
+                                .onTapGesture {
+                                    if let i = selectedIndex {
+                                        overlays[i].textColor = c
+                                        textColor = c
+                                    }
+                                }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+                // Background toggle + color + opacity
+                VStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        Button {
+                            if let i = selectedIndex {
+                                overlays[i].hasBackground.toggle()
+                                bgEnabled = overlays[i].hasBackground
+                            }
+                        } label: {
+                            Label(bgEnabled ? "Background: On" : "Background: Off", systemImage: bgEnabled ? "rectangle.fill.on.rectangle.fill" : "rectangle.on.rectangle")
+                                .font(.subheadline)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.black.opacity(0.06))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.black)
+
+                        if selectedIndex != nil {
+                            HStack(spacing: 6) {
+                                Image(systemName: "square.dashed")
+                                Slider(value: Binding(
+                                    get: { bgOpacity },
+                                    set: { newVal in
+                                        bgOpacity = newVal
+                                        if let i = selectedIndex {
+                                            overlays[i].backgroundColor = color(overlays[i].backgroundColor, withAlpha: newVal)
+                                            overlays[i].hasBackground = true
+                                            bgEnabled = true
+                                        }
+                                    }
+                                ), in: 0...1)
+                                Image(systemName: "square.fill")
+                            }
+                            .foregroundStyle(.black.opacity(0.8))
+                            .frame(maxWidth: 220)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+
+                    // Background color palette
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(backgroundOptions.indices, id: \.self) { idx in
+                                let base = backgroundOptions[idx]
+                                let swatch = color(base, withAlpha: bgOpacity)
+                                Circle()
+                                    .fill(swatch)
+                                    .frame(width: 28, height: 28)
+                                    .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1))
+                                    .overlay(
+                                        Group {
+                                            if colorsEqual(currentOverlay?.backgroundColor, swatch) {
+                                                Circle().stroke(Color.black, lineWidth: 2)
+                                            }
+                                        }
+                                    )
+                                    .onTapGesture {
+                                        if let i = selectedIndex {
+                                            overlays[i].backgroundColor = swatch
+                                            bgColor = swatch
+                                            overlays[i].hasBackground = true
+                                            bgEnabled = true
+                                        }
+                                    }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+
+                // Text + size + vertical slider
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        let textBinding = Binding<String>(
+                            get: { currentOverlay?.text ?? "" },
+                            set: {
+                                if let i = selectedIndex {
+                                    overlays[i].text = $0
+                                    typedText = $0
+                                }
+                            }
+                        )
+                        TextField("Type here", text: textBinding, axis: .vertical)
+                            .lineLimit(1...3)
+                            .textInputAutocapitalization(.never)
+                            .disableAutocorrection(true)
+                            .focused($textFieldFocused)
+                            .padding(10)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .foregroundStyle(.black)
+
+                        let sizeBinding = Binding<CGFloat>(
+                            get: { currentOverlay?.fontSize ?? fontSize },
+                            set: {
+                                if let i = selectedIndex {
+                                    overlays[i].fontSize = $0
+                                    fontSize = $0
+                                }
+                            }
+                        )
+                        HStack {
+                            Image(systemName: "textformat.size.smaller")
+                            Slider(value: sizeBinding, in: 12...96, step: 1)
+                            Image(systemName: "textformat.size.larger")
+                        }
+                        .foregroundStyle(.black)
+                    }
+
+                    let verticalSizeBinding = Binding<CGFloat>(
+                        get: { currentOverlay?.fontSize ?? fontSize },
+                        set: {
+                            if let i = selectedIndex {
+                                overlays[i].fontSize = $0
+                                fontSize = $0
+                            }
+                        }
+                    )
+                    VerticalSizeSlider(value: verticalSizeBinding, range: 12...96)
+                        .frame(width: 48, height: 140)
+                        .padding(.leading, 8)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 6)
+            }
+            .background(.ultraThinMaterial)
+
+            // Bottom buttons
             HStack(spacing: 10) {
                 Button(action: { handleAddTextNext(baseImage: baseImage) }) {
                     Text("Next")
@@ -389,104 +587,29 @@ struct ContentView: View {
         .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("Add Text")
         .toolbar {
-            // 顯示鍵盤時提供「完成」按鈕
             if textFieldFocused || isTyping {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") {
+                    Button("Done") {
                         textFieldFocused = false
                         isTyping = false
                     }
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            if let sel = selectedOverlayID,
-               let index = overlays.firstIndex(where: { $0.id == sel }) {
-                VStack(spacing: 8) {
-                    // 字體選擇
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(fontOptions, id: \.self) { name in
-                                let label = name ?? "System"
-                                Text(label)
-                                    .font(name != nil ? .custom(name!, size: 16) : .system(size: 16))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background((overlays[index].fontName == name) ? Color.black.opacity(0.12) : Color.black.opacity(0.06))
-                                    .clipShape(Capsule())
-                                    .onTapGesture {
-                                        overlays[index].fontName = name
-                                        selectedFontName = name
-                                    }
-                                    .foregroundStyle(.black)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-
-                    // 顏色選擇
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(colorOptions.indices, id: \.self) { idx in
-                                let c = colorOptions[idx]
-                                Circle()
-                                    .fill(c)
-                                    .frame(width: 28, height: 28)
-                                    .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1))
-                                    .onTapGesture {
-                                        overlays[index].textColor = c
-                                        textColor = c
-                                    }
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-
-                    // 文字輸入 + 字級
-                    HStack(alignment: .center) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            let textBinding = Binding<String>(
-                                get: { overlays[index].text },
-                                set: { overlays[index].text = $0; typedText = $0 }
-                            )
-                            TextField("Type here", text: textBinding, axis: .vertical)
-                                .lineLimit(1...3)
-                                .textInputAutocapitalization(.never)
-                                .disableAutocorrection(true)
-                                .focused($textFieldFocused)
-                                .padding(10)
-                                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
-                                .foregroundStyle(.black)
-
-                            let sizeBinding = Binding<CGFloat>(
-                                get: { overlays[index].fontSize },
-                                set: { overlays[index].fontSize = $0; fontSize = $0 }
-                            )
-                            HStack {
-                                Image(systemName: "textformat.size.smaller")
-                                Slider(value: sizeBinding, in: 12...96, step: 1)
-                                Image(systemName: "textformat.size.larger")
-                            }
-                            .foregroundStyle(.black)
-                        }
-
-                        let verticalSizeBinding = Binding<CGFloat>(
-                            get: { overlays[index].fontSize },
-                            set: { overlays[index].fontSize = $0; fontSize = $0 }
-                        )
-                        VerticalSizeSlider(value: verticalSizeBinding, range: 12...96)
-                            .frame(width: 48, height: 140)
-                            .padding(.leading, 8)
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 6)
-                }
-                .background(.ultraThinMaterial)
-            }
-        }
         .onChange(of: textFieldFocused) { _, focused in
             if !focused { isTyping = false }
         }
+    }
+
+    // Selected overlay helpers
+    private var selectedIndex: Int? {
+        guard let sel = selectedOverlayID,
+              let idx = overlays.firstIndex(where: { $0.id == sel }) else { return nil }
+        return idx
+    }
+    private var currentOverlay: TextOverlay? {
+        guard let i = selectedIndex else { return nil }
+        return overlays[i]
     }
 
     private func handleSelectOverlay(_ overlay: TextOverlay) {
@@ -497,6 +620,9 @@ struct ContentView: View {
         selectedFontName = overlay.fontName
         textColor = overlay.textColor
         fontSize = overlay.fontSize
+        bgEnabled = overlay.hasBackground
+        bgColor = overlay.backgroundColor
+        bgOpacity = alpha(of: overlay.backgroundColor)
     }
 
     private func handleAddTextNext(baseImage: UIImage) {
@@ -505,7 +631,6 @@ struct ContentView: View {
     }
 
     private func pushToIGText(baseImage: UIImage) {
-        // 進到 IG 式打字頁，沿用目前 overlays 當作初始值（或想要清空可改成 overlays = [] 再傳）
         path.append(.init(kind: .igAddText(baseImage: baseImage)))
     }
 
@@ -523,7 +648,7 @@ struct ContentView: View {
         )
     }
 
-    // MARK: - Step IG: On-canvas typing page (IG style)
+    // MARK: - IG Text page (on-canvas typing)
     @ViewBuilder
     private func IGTextAddView(baseImage: UIImage) -> some View {
         VStack(spacing: 12) {
@@ -535,7 +660,7 @@ struct ContentView: View {
                             .scaledToFit()
                             .frame(width: side, height: side)
 
-                        // 拖曳時顯示垃圾桶區
+                        // Trash zone while dragging
                         if isDraggingOverlay {
                             TrashZoneView()
                                 .frame(width: 120, height: 60)
@@ -551,7 +676,7 @@ struct ContentView: View {
                                 )
                         }
 
-                        // 文字 overlays（可拖曳、選取即打字）
+                        // Overlays: always TextField; size matches text content & font
                         ForEach(overlays) { overlay in
                             let isSelected = (selectedOverlayID == overlay.id)
                             DraggableTypingOverlay(
@@ -572,7 +697,7 @@ struct ContentView: View {
                     .coordinateSpace(name: "Canvas")
                 }
 
-                // 左側垂直字級滑桿（作用於選取中的 overlay）
+                // Left vertical size slider for selected overlay
                 if let sel = selectedOverlayID, let idx = overlays.firstIndex(where: { $0.id == sel }) {
                     VStack {
                         Spacer()
@@ -592,12 +717,13 @@ struct ContentView: View {
 
             Spacer(minLength: 8)
 
-            // 下方：字體與顏色列（以「Font」無名稱樣式）
+            // Bottom toolbars
             VStack(spacing: 10) {
+                // Fonts
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
                         ForEach(fontOptions, id: \.self) { name in
-                            let label = "Font"
+                            let label = name ?? "System"
                             Text(label)
                                 .font(name != nil ? .custom(name!, size: 18) : .system(size: 18))
                                 .padding(.horizontal, 14)
@@ -617,6 +743,7 @@ struct ContentView: View {
                     .padding(.horizontal)
                 }
 
+                // Text color
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         ForEach(colorOptions.indices, id: \.self) { idx in
@@ -625,6 +752,13 @@ struct ContentView: View {
                                 .fill(c)
                                 .frame(width: 28, height: 28)
                                 .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1))
+                                .overlay(
+                                    Group {
+                                        if currentOverlay?.textColor == c {
+                                            Circle().stroke(Color.black, lineWidth: 2)
+                                        }
+                                    }
+                                )
                                 .onTapGesture {
                                     if let sel = selectedOverlayID,
                                        let i = overlays.firstIndex(where: { $0.id == sel }) {
@@ -635,6 +769,82 @@ struct ContentView: View {
                         }
                     }
                     .padding(.horizontal)
+                }
+
+                // Background toggle + color + opacity
+                VStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        Button {
+                            if let sel = selectedOverlayID,
+                               let i = overlays.firstIndex(where: { $0.id == sel }) {
+                                overlays[i].hasBackground.toggle()
+                                bgEnabled = overlays[i].hasBackground
+                            }
+                        } label: {
+                            Label(bgEnabled ? "Background: On" : "Background: Off", systemImage: bgEnabled ? "rectangle.fill.on.rectangle.fill" : "rectangle.on.rectangle")
+                                .font(.subheadline)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.black.opacity(0.06))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.black)
+
+                        if selectedIndex != nil {
+                            HStack(spacing: 6) {
+                                Image(systemName: "square.dashed")
+                                Slider(value: Binding(
+                                    get: { bgOpacity },
+                                    set: { newVal in
+                                        bgOpacity = newVal
+                                        if let i = selectedIndex {
+                                            overlays[i].backgroundColor = color(overlays[i].backgroundColor, withAlpha: newVal)
+                                            overlays[i].hasBackground = true
+                                            bgEnabled = true
+                                        }
+                                    }
+                                ), in: 0...1)
+                                Image(systemName: "square.fill")
+                            }
+                            .foregroundStyle(.black.opacity(0.8))
+                            .frame(maxWidth: 220)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+
+                    // Background color palette
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(backgroundOptions.indices, id: \.self) { idx in
+                                let base = backgroundOptions[idx]
+                                let swatch = color(base, withAlpha: bgOpacity)
+                                Circle()
+                                    .fill(swatch)
+                                    .frame(width: 28, height: 28)
+                                    .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1))
+                                    .overlay(
+                                        Group {
+                                            if colorsEqual(currentOverlay?.backgroundColor, swatch) {
+                                                Circle().stroke(Color.black, lineWidth: 2)
+                                            }
+                                        }
+                                    )
+                                    .onTapGesture {
+                                        if let sel = selectedOverlayID,
+                                           let i = overlays.firstIndex(where: { $0.id == sel }) {
+                                            overlays[i].backgroundColor = swatch
+                                            bgColor = swatch
+                                            overlays[i].hasBackground = true
+                                            bgEnabled = true
+                                        }
+                                    }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
                 }
 
                 Button(action: { handleIGAddTextNext(baseImage: baseImage) }) {
@@ -653,14 +863,12 @@ struct ContentView: View {
         .background(GrayscaleRadialBackground().ignoresSafeArea())
         .navigationTitle("IG Text")
         .toolbar {
-            // 右上角：新增文字
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Text") { createAndActivateEmptyOverlay() }
+                Button("Add Text") { createAndActivateEmptyOverlay() }
             }
-            // 鍵盤出現時顯示「完成」
             if textFieldFocused || isTyping {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") {
+                    Button("Done") {
                         textFieldFocused = false
                         isTyping = false
                     }
@@ -690,6 +898,9 @@ struct ContentView: View {
         selectedFontName = overlay.fontName
         textColor = overlay.textColor
         fontSize = overlay.fontSize
+        bgEnabled = overlay.hasBackground
+        bgColor = overlay.backgroundColor
+        bgOpacity = alpha(of: overlay.backgroundColor)
     }
 
     private func deleteOverlay(_ overlay: TextOverlay) {
@@ -719,7 +930,7 @@ struct ContentView: View {
 
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: uiFont,
-                .foregroundColor: UIColor(ov.textColor)
+                .foregroundColor: uiColor(from: ov.textColor)
             ]
 
             let textSize: CGSize = {
@@ -741,7 +952,7 @@ struct ContentView: View {
             if ov.hasBackground {
                 let bgRect = CGRect(origin: origin, size: textSize).insetBy(dx: -8, dy: -6)
                 let path = UIBezierPath(roundedRect: bgRect, cornerRadius: 8)
-                UIColor(ov.backgroundColor).setFill()
+                uiColor(from: ov.backgroundColor).setFill()
                 path.fill()
             }
 
@@ -766,7 +977,7 @@ struct ContentView: View {
 
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: uiFont,
-                .foregroundColor: UIColor(ov.textColor)
+                .foregroundColor: uiColor(from: ov.textColor)
             ]
 
             let textSize: CGSize = {
@@ -788,7 +999,7 @@ struct ContentView: View {
             if ov.hasBackground {
                 let bgRect = CGRect(origin: origin, size: textSize).insetBy(dx: -8, dy: -6)
                 let path = UIBezierPath(roundedRect: bgRect, cornerRadius: 8)
-                UIColor(ov.backgroundColor).setFill()
+                uiColor(from: ov.backgroundColor).setFill()
                 path.fill()
             }
 
@@ -799,9 +1010,7 @@ struct ContentView: View {
         return UIGraphicsGetImageFromCurrentImageContext() ?? base
     }
 
-    // 統一字型建立：盡可能讓 Core Graphics 與 SwiftUI 的 Font(weight) 視覺一致
     private static func makeUIFont(fontName: String?, size: CGFloat, weight: Font.Weight) -> UIFont {
-        // 將 SwiftUI Font.Weight 映射到 UIFont.Weight
         let uiWeight: UIFont.Weight = {
             switch weight {
             case .ultraLight: return .ultraLight
@@ -817,26 +1026,18 @@ struct ContentView: View {
             }
         }()
 
-        // 沒有指定字體名稱 → 系統字體直接用 weight
         guard let name = fontName, !name.isEmpty else {
             return UIFont.systemFont(ofSize: size, weight: uiWeight)
         }
 
-        // 指定字體名稱：先嘗試載入，再加上 weight trait
         if let baseFont = UIFont(name: name, size: size) {
-            // 透過字體描述符加上 weight trait
             let traits: [UIFontDescriptor.TraitKey: Any] = [
                 .weight: uiWeight
             ]
             let desc = baseFont.fontDescriptor.addingAttributes([.traits: traits])
             let weighted = UIFont(descriptor: desc, size: size)
-
-            // 若字型家族不支援該 weight，weighted.pointSize 仍正確但外觀可能不變。
-            // 為了保證至少有對應粗細，若 weighted 與 baseFont 的字重無法觀察差異，可 fallback 為系統字體。
-            // 在這裡直接回傳 weighted；如需更激進可檢查 familyNames/availableMembers 做更精細對應。
             return weighted
         } else {
-            // 名稱無效時退回系統字體
             return UIFont.systemFont(ofSize: size, weight: uiWeight)
         }
     }
@@ -854,8 +1055,8 @@ struct ContentView: View {
     struct EditorStep: Hashable {
         enum Kind {
             case transform
-            case addText(baseImage: UIImage)       // 原本的打字方式（底部輸入欄）
-            case igAddText(baseImage: UIImage)     // IG 式畫布上打字
+            case addText(baseImage: UIImage)
+            case igAddText(baseImage: UIImage)
             case combinedAdjust(baseImage: UIImage, overlays: [TextOverlay])
         }
         let id = UUID()
@@ -913,10 +1114,42 @@ struct ContentView: View {
         selectedFilter = .none
         brightness = 0.0
         contrast = 1.0
+        bgEnabled = false
+        bgColor = Color.black.opacity(0.06)
+        bgOpacity = 0.06
+    }
+
+    // MARK: - Color helpers
+    private func alpha(of color: Color) -> Double {
+        Double(UIColor(color).cgColor.alpha)
+    }
+
+    private func color(_ base: Color, withAlpha alpha: Double) -> Color {
+        let ui = UIColor(base)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return Color(red: Double(r), green: Double(g), blue: Double(b), opacity: alpha)
+    }
+
+    private func colorsEqual(_ c1: Color?, _ c2: Color) -> Bool {
+        guard let c1 else { return false }
+        let u1 = ContentView.uiColor(from: c1)
+        let u2 = ContentView.uiColor(from: c2)
+        return u1.isEqual(u2)
+    }
+
+    private static func uiColor(from color: Color) -> UIColor {
+        let ui = UIColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        if ui.getRed(&r, green: &g, blue: &b, alpha: &a) {
+            return UIColor(red: r, green: g, blue: b, alpha: a)
+        } else {
+            return ui
+        }
     }
 }
 
-// MARK: - Draggable typing overlay with trash delete (IG style)
+// MARK: - Draggable typing overlay with TextField (size matches content)
 private struct DraggableTypingOverlay: View {
     @Binding var overlay: TextOverlay
     var isSelected: Bool
@@ -928,7 +1161,7 @@ private struct DraggableTypingOverlay: View {
     @State private var frameInCanvas: CGRect = .zero
 
     var body: some View {
-        content
+        textFieldView
             .background(
                 GeometryReader { geo in
                     Color.clear
@@ -955,26 +1188,6 @@ private struct DraggableTypingOverlay: View {
             .animation(.snappy, value: overlay.position)
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if isSelected {
-            textFieldView
-        } else {
-            textView
-        }
-    }
-
-    private var textView: some View {
-        let font = fontForOverlay()
-        return Text(overlay.text.isEmpty ? "Type here" : overlay.text)
-            .font(font)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(overlay.hasBackground ? overlay.backgroundColor : Color.clear)
-            .foregroundStyle(overlay.textColor)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
     private var textFieldView: some View {
         let font = fontForOverlay()
         return TextField("Type here", text: Binding(
@@ -984,14 +1197,36 @@ private struct DraggableTypingOverlay: View {
         .lineLimit(1...3)
         .textInputAutocapitalization(.never)
         .disableAutocorrection(true)
-        .focused($textFieldFocused)
+        .focused($textFieldFocused, equals: true)
         .font(font)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(overlay.hasBackground ? overlay.backgroundColor : Color.clear)
         .foregroundStyle(overlay.textColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .onAppear { DispatchQueue.main.async { self.textFieldFocused = true } }
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.2, dash: [6, 4]))
+            }
+        }
+        .onAppear {
+            if isSelected {
+                DispatchQueue.main.async { self.textFieldFocused = true }
+            }
+        }
+        .onChange(of: isSelected) { _, newValue in
+            if newValue {
+                DispatchQueue.main.async { self.textFieldFocused = true }
+            } else {
+                self.textFieldFocused = false
+            }
+        }
+        .background(
+            SizeReader { size in
+                overlay.measuredSize = size
+            }
+        )
     }
 
     private func fontForOverlay() -> Font {
@@ -1010,224 +1245,22 @@ private struct DraggableTypingOverlay: View {
     }
 }
 
-// MARK: - Trash zone view
-private struct TrashZoneView: View {
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.red.opacity(0.6), lineWidth: 2))
-            Image(systemName: "trash")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.red)
-        }
-    }
-}
-
-// MARK: - Combined Filter + Adjust view
-private struct CombinedAdjustView: View {
-    let baseImage: UIImage
-    let overlays: [TextOverlay]
-    let initialFilter: FilterKind
-    let initialBrightness: Double
-    let initialContrast: Double
-    let onNext: (FilterKind, Double, Double) -> Void
-
-    @State private var localFilter: FilterKind
-    @State private var localBrightness: Double
-    @State private var localContrast: Double
-    @State private var filteredBasePreview: UIImage
-
-    private let filterService = FilterService()
-
-    init(baseImage: UIImage, overlays: [TextOverlay], initialFilter: FilterKind, initialBrightness: Double, initialContrast: Double, onNext: @escaping (FilterKind, Double, Double) -> Void) {
-        self.baseImage = baseImage
-               self.overlays = overlays
-        self.initialFilter = initialFilter
-        self.initialBrightness = initialBrightness
-        self.initialContrast = initialContrast
-        self.onNext = onNext
-        _localFilter = State(initialValue: initialFilter)
-        _localBrightness = State(initialValue: initialBrightness)
-        _localContrast = State(initialValue: initialContrast)
-        _filteredBasePreview = State(initialValue: baseImage)
-    }
-
-    var body: some View {
-        VStack(spacing: 12) {
-            SquareCanvas { side in
-                ZStack {
-                    Image(uiImage: filteredBasePreview)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: side, height: side)
-
-                    Image(uiImage: overlayPreviewImage(side: side))
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: side, height: side)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-            .padding(.horizontal)
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Brightness & Contrast")
-                    .font(.headline)
-
-                VStack(spacing: 10) {
-                    HStack {
-                        Text("Brightness")
-                            .font(.subheadline)
-                            .foregroundStyle(.black.opacity(0.8))
-                        Slider(value: Binding(
-                            get: { localBrightness },
-                            set: { localBrightness = ( ($0 * 10).rounded() / 10 ).clamped(to: -1...1); updatePreview() }
-                        ), in: -1...1, step: 0.1)
-                    }
-                    HStack {
-                        Text("Contrast")
-                            .font(.subheadline)
-                            .foregroundStyle(.black.opacity(0.8))
-                        Slider(value: Binding(
-                            get: { localContrast },
-                            set: { localContrast = ( ($0 * 10).rounded() / 10 ).clamped(to: 0...4); updatePreview() }
-                        ), in: 0...4, step: 0.1)
-                    }
-                }
-            }
-            .padding(.horizontal)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Filters")
-                    .font(.headline)
-                FilterPickerView(
-                    baseImage: baseImage,
-                    selected: Binding(
-                        get: { localFilter },
-                        set: { localFilter = $0; updatePreview() }
-                    ),
-                    onSelect: { updatePreview() }
-                )
-                .padding(.horizontal, 0)
-            }
-            .padding(.horizontal)
-
-            Spacer()
-
-            let finalImage = ContentView.renderTextOverlaysOnImage(
-                base: filteredBasePreview,
-                overlays: overlays
-            )
-
-            HStack {
-                Button {
-                    UIImageWriteToSavedPhotosAlbum(finalImage, nil, nil, nil)
-                } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black.opacity(0.06))
-                        .foregroundStyle(.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-
-                ShareLink(item: Image(uiImage: finalImage), preview: SharePreview("Edited Image", image: Image(uiImage: finalImage))) {
-                    Text("Share")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black.opacity(0.08))
-                        .foregroundStyle(.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-            }
-            .padding(.horizontal)
-        }
-        .padding(.vertical)
-        .background(GrayscaleRadialBackground().ignoresSafeArea())
-        .navigationTitle("Adjust")
-        .onAppear {
-            updatePreview()
-        }
-    }
-
-    private func overlayPreviewImage(side: CGFloat) -> UIImage {
-        ContentView.renderTextOverlaysLayer(
-            size: CGSize(width: side, height: side),
-            scale: UIScreen.main.scale,
-            overlays: overlays
-        )
-    }
-
-    private func updatePreview() {
-        filteredBasePreview = filterService.render(image: baseImage, filter: localFilter, brightness: localBrightness, contrast: localContrast)
-        onNext(localFilter, localBrightness, localContrast)
-    }
-}
-
-// MARK: - Square canvas helper
-private struct SquareCanvas<Content: View>: View {
-    let content: (CGFloat) -> Content
-    init(@ViewBuilder content: @escaping (CGFloat) -> Content) {
-        self.content = content
-    }
-
+// Helper to read rendered size of a view
+private struct SizeReader: View {
+    var onChange: (CGSize) -> Void
     var body: some View {
         GeometryReader { geo in
-            let side = min(geo.size.width, geo.size.width)
-            ZStack {
-                GrayscaleRadialBackground()
-                content(side)
-                    .frame(width: side, height: side)
-                    .clipped()
-            }
-            .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.15), lineWidth: 1))
-            .frame(maxWidth: .infinity, alignment: .center)
+            Color.clear
+                .preference(key: SizePreferenceKey.self, value: geo.size)
         }
-        .frame(height: 360)
-        .background(GrayscaleRadialBackground())
+        .onPreferenceChange(SizePreferenceKey.self, perform: onChange)
     }
 }
 
-// MARK: - Vertical size Slider + triangle background
-private struct VerticalSizeSlider: View {
-    @Binding var value: CGFloat
-    var range: ClosedRange<CGFloat>
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                TriangleUp()
-                    .fill(LinearGradient(colors: [Color.black.opacity(0.06), Color.black.opacity(0.12)],
-                                         startPoint: .bottom, endPoint: .top))
-                    .padding(.horizontal, 12)
-
-                let dblBinding = Binding<Double>(
-                    get: { Double(value) },
-                    set: { value = CGFloat($0) }
-                )
-                Slider(
-                    value: dblBinding,
-                    in: Double(range.lowerBound)...Double(range.upperBound)
-                )
-                .rotationEffect(.degrees(-90))
-                .frame(width: geo.size.height)
-            }
-        }
-    }
-}
-
-private struct TriangleUp: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        p.closeSubpath()
-        return p
+private struct SizePreferenceKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
     }
 }
 
@@ -1268,20 +1301,9 @@ private struct CameraPicker: UIViewControllerRepresentable {
     ContentView()
 }
 
-// 共用灰白基調的漸層背景（預設：放射狀）
-private struct GrayscaleRadialBackground: View {
+private struct GrayscaleRadialBackground_Preview: View {
     var body: some View {
-        RadialGradient(
-            gradient: Gradient(colors: [
-                Color(white: 0.95),
-                Color(white: 0.75),
-                Color(white: 0.45),
-                Color(white: 0.20)
-            ]),
-            center: .center,
-            startRadius: 0,
-            endRadius: 1200
-        )
+        GrayscaleRadialBackground()
     }
 }
 

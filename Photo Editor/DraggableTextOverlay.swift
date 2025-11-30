@@ -7,12 +7,14 @@ struct DraggableTextOverlay: View {
 
     @State private var dragOffset: CGSize = .zero
 
+    private let cornerRadius: CGFloat = 8
+
     var body: some View {
         textView
             .overlay {
                 if isSelected {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.2, dash: [6, 4]))
                 }
             }
             .offset(x: overlay.position.width + dragOffset.width,
@@ -47,7 +49,11 @@ struct DraggableTextOverlay: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(overlay.hasBackground ? overlay.backgroundColor : Color.clear)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(overlay.hasBackground ? Color.black.opacity(0.2) : Color.clear, lineWidth: 1)
+            )
             .foregroundStyle(overlay.textColor)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
 }

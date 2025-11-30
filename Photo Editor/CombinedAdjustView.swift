@@ -40,7 +40,7 @@ struct CombinedAdjustView: View {
                     .scaledToFit()
                     .frame(width: side, height: side)
                     .overlay {
-                        // 預覽文字覆蓋
+                        // Preview overlays
                         Image(uiImage: ContentView.renderTextOverlaysLayer(size: CGSize(width: side, height: side), scale: filtered.scale, overlays: overlays))
                             .resizable()
                             .scaledToFit()
@@ -48,28 +48,28 @@ struct CombinedAdjustView: View {
             }
             .padding(.horizontal)
 
-            // 濾鏡
+            // Filters
             VStack(alignment: .leading, spacing: 8) {
-                Text("濾鏡")
+                Text("Filters")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 FilterPickerView(baseImage: baseImage, selected: $workingFilter) {
-                    // 立即更新預覽即可
+                    // Update preview immediately
                 }
             }
             .padding(.horizontal)
 
-            // 亮度/對比
+            // Brightness / Contrast
             VStack(spacing: 10) {
                 HStack {
-                    Text("亮度")
+                    Text("Brightness")
                     Slider(value: $workingBrightness, in: -0.5...0.5)
                     Text(String(format: "%.2f", workingBrightness))
                         .font(.footnote.monospacedDigit())
                         .frame(width: 52, alignment: .trailing)
                 }
                 HStack {
-                    Text("對比")
+                    Text("Contrast")
                     Slider(value: $workingContrast, in: 0.5...1.5)
                     Text(String(format: "%.2f", workingContrast))
                         .font(.footnote.monospacedDigit())
@@ -84,7 +84,7 @@ struct CombinedAdjustView: View {
                 Button {
                     onNext(workingFilter, workingBrightness, workingContrast)
                 } label: {
-                    Text("套用並繼續")
+                    Text("Apply and Continue")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()
@@ -97,7 +97,7 @@ struct CombinedAdjustView: View {
                     let filtered = service.render(image: baseImage, filter: workingFilter, brightness: workingBrightness, contrast: workingContrast)
                     onExport(filtered, overlays)
                 } label: {
-                    Text("直接匯出")
+                    Text("Export Now")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()
@@ -110,7 +110,7 @@ struct CombinedAdjustView: View {
             .padding(.bottom, 8)
         }
         .padding(.vertical)
-        .navigationTitle("濾鏡與調整")
+        .navigationTitle("Adjustments")
         .background(GrayscaleRadialBackground().ignoresSafeArea())
     }
 }
