@@ -17,8 +17,11 @@ struct TextOverlay: Identifiable, Equatable {
     var hasBackground: Bool
     var backgroundColor: Color
 
-    // 新增：量測後的實際呈現尺寸（含內距），預設為 .zero
+    // 動態量測尺寸（隨輸入更新）
     var measuredSize: CGSize = .zero
+
+    // 確認後凍結的背景尺寸（有值時以此為準，不再隨輸入變動）
+    var fixedBackgroundSize: CGSize? = nil
 
     init(
         text: String,
@@ -29,7 +32,8 @@ struct TextOverlay: Identifiable, Equatable {
         textColor: Color = .primary,
         hasBackground: Bool = false,
         backgroundColor: Color = Color.black.opacity(0.6),
-        measuredSize: CGSize = .zero
+        measuredSize: CGSize = .zero,
+        fixedBackgroundSize: CGSize? = nil
     ) {
         self.text = text
         self.position = position
@@ -40,6 +44,7 @@ struct TextOverlay: Identifiable, Equatable {
         self.hasBackground = hasBackground
         self.backgroundColor = backgroundColor
         self.measuredSize = measuredSize
+        self.fixedBackgroundSize = fixedBackgroundSize
     }
 }
 

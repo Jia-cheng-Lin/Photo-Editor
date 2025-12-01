@@ -1,6 +1,5 @@
 import SwiftUI
 
-// Draggable typing overlay used in IGTextAddView
 struct DraggableTypingOverlay: View {
     @Binding var overlay: TextOverlay
     var isSelected: Bool
@@ -11,56 +10,69 @@ struct DraggableTypingOverlay: View {
     @State private var dragOffset: CGSize = .zero
     @State private var frameInCanvas: CGRect = .zero
 
+    private let horizontalPadding: CGFloat = 10
+    private let verticalPadding: CGFloat = 6
+    private let cornerRadius: CGFloat = 8
+
     var body: some View {
-        textFieldView
+        ZStack {
+            if overlay.hasBackground, let size = contentSize() {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(overlay.backgroundColor)
+                    .frame(width: size.width + horizontalPadding * 2,
+                           height: size.height + verticalPadding * 2)
+            }
+
+            TextField("Type here", text: Binding(
+                get: { overlay.text },
+                set: { overlay.text = $0 }
+            ), axis: .vertical)
+            .lineLimit(1...3)
+            .textInputAutocapitalization(.never)
+            .disableAutocorrection(true)
+            .focused($textFieldFocused, equals: true)
+            .font(fontForOverlay())
+            .foregroundStyle(overlay.textColor)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
             .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { updateFrame(geo: geo) }
-                        .onChange(of: geo.size) { _, _ in updateFrame(geo: geo) }
-                        .onChange(of: overlay.position) { _, _ in updateFrame(geo: geo) }
+                IntrinsicTextSizeReader(text: overlay.text, font: fontForOverlay()) { size in
+                    if overlay.fixedBackgroundSize == nil {
+                        overlay.measuredSize = size
+                    }
                 }
             )
-            .offset(x: overlay.position.width + dragOffset.width,
-                    y: overlay.position.height + dragOffset.height)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        dragOffset = value.translation
-                        onBeginDrag()
-                    }
-                    .onEnded { value in
-                        overlay.position.width += value.translation.width
-                        overlay.position.height += value.translation.height
-                        dragOffset = .zero
-                        onEndDrag(frameInCanvas)
-                    }
-            )
-            .animation(.snappy, value: overlay.position)
-    }
-
-    private var textFieldView: some View {
-        let font = fontForOverlay()
-        return TextField("Type here", text: Binding(
-            get: { overlay.text },
-            set: { overlay.text = $0 }
-        ), axis: .vertical)
-        .lineLimit(1...3)
-        .textInputAutocapitalization(.never)
-        .disableAutocorrection(true)
-        .focused($textFieldFocused, equals: true)
-        .font(font)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(overlay.hasBackground ? overlay.backgroundColor : Color.clear)
-        .foregroundStyle(overlay.textColor)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.2, dash: [6, 4]))
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.2, dash: [6, 4]))
+                }
             }
         }
+        .offset(x: overlay.position.width + dragOffset.width,
+                y: overlay.position.height + dragOffset.height)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { updateFrame(geo: geo) }
+                    .onChange(of: geo.size) { _, _ in updateFrame(geo: geo) }
+                    .onChange(of: overlay.position) { _, _ in updateFrame(geo: geo) }
+            }
+        )
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    dragOffset = value.translation
+                    onBeginDrag()
+                }
+                .onEnded { value in
+                    overlay.position.width += value.translation.width
+                    overlay.position.height += value.translation.height
+                    dragOffset = .zero
+                    onEndDrag(frameInCanvas)
+                }
+        )
+        .animation(.snappy, value: overlay.position)
         .onAppear {
             if isSelected {
                 DispatchQueue.main.async { self.textFieldFocused = true }
@@ -73,11 +85,11 @@ struct DraggableTypingOverlay: View {
                 self.textFieldFocused = false
             }
         }
-        .background(
-            SizeReader { size in
-                overlay.measuredSize = size
-            }
-        )
+    }
+
+    private func contentSize() -> CGSize? {
+        if let fixed = overlay.fixedBackgroundSize { return fixed }
+        return overlay.measuredSize == .zero ? nil : overlay.measuredSize
     }
 
     private func fontForOverlay() -> Font {
@@ -90,27 +102,10 @@ struct DraggableTypingOverlay: View {
 
     private func updateFrame(geo: GeometryProxy) {
         let size = geo.size
-        overlay.measuredSize = size
-        let origin = CGPoint(x: overlay.position.width, y: overlay.position.height)
+        let origin = CGPoint(
+            x: overlay.position.width - size.width / 2,
+            y: overlay.position.height - size.height / 2
+        )
         frameInCanvas = CGRect(origin: origin, size: size)
-    }
-}
-
-// Helper to read rendered size of a view
-private struct SizeReader: View {
-    var onChange: (CGSize) -> Void
-    var body: some View {
-        GeometryReader { geo in
-            Color.clear
-                .preference(key: SizePreferenceKey.self, value: geo.size)
-        }
-        .onPreferenceChange(SizePreferenceKey.self, perform: onChange)
-    }
-}
-
-private struct SizePreferenceKey: PreferenceKey {
-    static var defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        value = nextValue()
     }
 }

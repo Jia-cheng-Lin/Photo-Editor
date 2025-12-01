@@ -4,6 +4,17 @@ import SwiftUI
 struct ExportRequest: Equatable {
     let filteredBase: UIImage
     let overlays: [TextOverlay]
+
+    // New: snapshot of the final composed image (already rendered)
+    let finalImage: UIImage?
+    let finalName: String?
+
+    static func == (lhs: ExportRequest, rhs: ExportRequest) -> Bool {
+        lhs.filteredBase == rhs.filteredBase
+        && lhs.overlays == rhs.overlays
+        && lhs.finalImage?.pngData() == rhs.finalImage?.pngData()
+        && lhs.finalName == rhs.finalName
+    }
 }
 
 struct ExportRequestKey: PreferenceKey {

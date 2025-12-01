@@ -17,6 +17,7 @@ struct VerticalSizeSlider: View {
                 RoundedRectangle(cornerRadius: 3)
                     .fill(Color.black.opacity(0.08))
                     .frame(width: trackWidth)
+
                 RoundedRectangle(cornerRadius: 3)
                     .fill(Color.black.opacity(0.25))
                     .frame(width: trackWidth)
@@ -44,10 +45,3 @@ struct VerticalSizeSlider: View {
         }
     }
 }
-
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
-    }
-}
-

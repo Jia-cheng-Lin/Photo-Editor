@@ -2,18 +2,26 @@ import SwiftUI
 import Photos
 
 struct ExportView: View {
+    // New: accept an optional final image (from snapshot)
     let filteredBase: UIImage
     let overlays: [TextOverlay]
+    let finalImage: UIImage?
 
-    @State private var exporting: Bool = false
+    @State private var composed: UIImage?
     @State private var showShare: Bool = false
-    @State private var exportedImage: UIImage?
+
+    init(filteredBase: UIImage, overlays: [TextOverlay], finalImage: UIImage? = nil) {
+        self.filteredBase = filteredBase
+        self.overlays = overlays
+        self.finalImage = finalImage
+    }
 
     var body: some View {
         VStack(spacing: 12) {
             SquareCanvas { side in
-                let composed = compose()
-                Image(uiImage: composed)
+                // Prefer the provided final image; fall back to composing once
+                let img = composed ?? finalImage ?? composeOnce()
+                Image(uiImage: img)
                     .resizable()
                     .scaledToFit()
                     .frame(width: side, height: side)
@@ -24,9 +32,10 @@ struct ExportView: View {
 
             HStack(spacing: 10) {
                 Button {
-                    saveToPhotos()
+                    let img = composed ?? finalImage ?? composeOnce()
+                    UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
                 } label: {
-                    Text("儲存到照片")
+                    Text("Download")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()
@@ -36,10 +45,11 @@ struct ExportView: View {
                 }
 
                 Button {
-                    exportedImage = compose()
+                    let img = composed ?? finalImage ?? composeOnce()
+                    composed = img
                     showShare = true
                 } label: {
-                    Text("分享")
+                    Text("Share")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()
@@ -51,23 +61,21 @@ struct ExportView: View {
             .padding(.horizontal)
         }
         .padding(.vertical)
-        .navigationTitle("匯出")
+        .navigationTitle("Export")
         .background(GrayscaleRadialBackground().ignoresSafeArea())
+        .onAppear {
+            // Cache once for consistent preview/actions
+            composed = finalImage ?? composeOnce()
+        }
         .sheet(isPresented: $showShare) {
-            if let img = exportedImage {
+            if let img = composed {
                 ShareSheet(activityItems: [img])
             }
         }
     }
 
-    private func compose() -> UIImage {
-        // 將 filteredBase 與 overlays 合成
+    private func composeOnce() -> UIImage {
         ContentView.renderTextOverlaysOnImage(base: filteredBase, overlays: overlays)
-    }
-
-    private func saveToPhotos() {
-        let composed = compose()
-        UIImageWriteToSavedPhotosAlbum(composed, nil, nil, nil)
     }
 }
 
@@ -80,4 +88,3 @@ private struct ShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
-
